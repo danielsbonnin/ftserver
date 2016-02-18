@@ -3,6 +3,7 @@
 *.opendb
 *.vcxproj
 *.filters
+*.user
 .vs/
 Debug/
 Release/
