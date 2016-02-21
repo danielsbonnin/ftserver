@@ -18,9 +18,9 @@ int main(int argc, char** argv) {
 
 	
 	cout << "You entered port number: " << portno << "\n";
-	waitForClient(to_string(portno).c_str());
+	waitForClient(to_string(portno).c_str());  //Call server function on port arg.
 
-	getchar();
+	getchar();  // TODO: Windows so the cmd window stays open long enough to read.
 	return 0;
 }
 
@@ -75,12 +75,14 @@ int waitForClient(const char  *portno) {
 	}
 
 	int status;
-	int s;  // The server socket
-	int c; // The client in the control connection.
+	SOCKET s = INVALID_SOCKET;  // The server socket
+	SOCKET c = INVALID_SOCKET; // The client in the control connection.
+	int recvRetVal, bindRetVal, listenRetVal, sendRetVal;
 	struct addrinfo hints;
-	struct addrinfo *servinfo;  // will point to the results
+	struct addrinfo *servinfo = NULL;  // will point to the results
 	struct sockaddr_storage c_addr;  // Address info for client control connection
 	socklen_t addrlen = sizeof(struct sockaddr_storage);
+	char buffer[RECV_BUF_LEN];
 
 	memset(&hints, 0, sizeof hints); // Zero-out hints
 	hints.ai_family = AF_INET;  // ipv4 socket
@@ -90,7 +92,6 @@ int waitForClient(const char  *portno) {
 	if ((status = getaddrinfo(NULL, portno, &hints, &servinfo)) != 0) {
 		// TODO: handle errno with getaddrinfo
 		cout << "Error with getaddrinfo\n";
-		/*fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));*/
 		exit(1);
 	}
 
@@ -100,29 +101,64 @@ int waitForClient(const char  *portno) {
 	s = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
 
 	// Bind socket to port (specified in struct addrinfo hints)
-	bind(s, servinfo->ai_addr, servinfo->ai_addrlen);
+	bindRetVal = bind(s, servinfo->ai_addr, servinfo->ai_addrlen);
+	freeaddrinfo(servinfo);
 
-		// TODO: handle errno on listen().
-	if (listen(s, MAX_INCOMING_CONNECTIONS) == -1) {
+	// TODO: handle errno on listen().
+	if ((listenRetVal = listen(s, MAX_INCOMING_CONNECTIONS)) == -1) {
 		cout << "Error on listen()\n";
 	}
-	else {
-		cout << "Incoming connection. . .";
+	
+	//Accept clients until interrupt is received. TODO: gracefully accept a shutdown command or signal
+	while (true) {
 		// TODO: handle errno on accept()
-		if (c = accept(s, (struct sockaddr *)&c_addr, &addrlen) != -1) {
+		if ((c = accept(s, (struct sockaddr *)&c_addr, &addrlen)) == INVALID_SOCKET) {
+			closesocket(s);
+			WSACleanup();  //TODO: Windows-specific func to remove.
 			cout << "Error on accept()\n";
+			return 0;
 		}
-		else {
-			cout << "Received a connection from a client";
-			closesocket(c);  // This needs to be "close()" for linux.
-		}
+
+
+		//TODO: remove sample code
+		//do-while loop is all sample code from MSDN
+		// Receive until the peer shuts down the connection
+		do {
+			recvRetVal = recv(c, buffer, RECV_BUF_LEN, 0);
+			if (recvRetVal > 0) {
+				printf("Bytes received: %d\n", recvRetVal);
+				string bufString(buffer);
+				bufString = bufString.substr(0, recvRetVal);
+				cout << "Received " << bufString << " from client\n";
+				parseCommand(bufString);
+				sendFile();
+			}
+			else if (recvRetVal == 0)
+				printf("Connection closing...\n");
+			else {
+				printf("recv failed with error: %d\n", WSAGetLastError());
+				closesocket(c); //TODO: change to "close()" for linux.
+				WSACleanup();  //TODO: windows-specific to remove.
+				return 1;
+			}
+		} while (recvRetVal > 0);
 	}
+	closesocket(s);
 
+	WSACleanup(); // TODO: get rid of this function: Windows-specific.
+	return 0;
 
-	// ... do everything until you don't need servinfo anymore ....
+}
 
+int sendFile() {
+	cout << "Entered sendFile()\n";
+	return 1;
+}
 
-	freeaddrinfo(servinfo); // free the linked-list
-	WSACleanup(); // Windows-specific.
-
+int parseCommand(string msg) {
+	string message(msg);
+	cout << "parseCommand() is parsing " << message << "\n";
+	string command = message.substr(message.find_first_of('<') + 1, message.find_first_of('>') - 1);
+	cout << "the parsed command is: " << command << "\n";
+	return 1;
 }

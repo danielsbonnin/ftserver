@@ -12,6 +12,11 @@
 #define PORT_MIN 1024
 #define USAGE "Usage: ./ftserver <int PORTNO (1024 - 65535)>\n"
 #define MAX_INCOMING_CONNECTIONS 1
+#define RECV_BUF_LEN 1024
+#define GET_COMMAND "g"
+#define LIST_COMMAND "l"
 int waitForClient(const char *portno);
 int getPort(int argc, char** argv);
+int sendFile();
+int parseCommand(std::string msg);
 #endif
