@@ -7,3 +7,5 @@
 .vs/
 Debug/
 Release/
+ftserver
+*.swp

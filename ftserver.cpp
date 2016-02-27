@@ -1,12 +1,14 @@
 #include <iostream>
 #include "ftserver.h"
 #include <string>
+#include <cstring>
 #include <stdexcept>
 #include <sys/types.h>
-#include <WinSock2.h>
-#include <ws2tcpip.h>  // winsock library. 
-
-#pragma comment(lib, "Ws2_32.lib") //Link to winsock library file.
+#include <sys/socket.h>
+#include <netdb.h>
+#include <stdio.h>
+#include <netinet/in.h> //For inet_ntoa()
+#include <arpa/inet.h>
 using namespace std;
 
 
@@ -19,7 +21,7 @@ int main(int argc, char** argv) {
 
 	
 	cout << "You entered port number: " << portno << "\n";
-	waitForClient(to_string(portno).c_str());  //Call server function on port arg.
+	waitForClient(to_string((long long)portno).c_str());  //Call server function on port arg.
 
 	getchar();  // TODO: Windows so the cmd window stays open long enough to read.
 	return 0;
@@ -61,29 +63,17 @@ int getPort(int argc, char **argv) {
  * @param portno port number to listen on.
  * @pre portno is valid.
  */
-int waitForClient(const char  *portno) {
+int waitForClient(const char *portno) {
 	
 	// The following is copy-paste from Beej's guide. Comments are mine (some)
-	//WSA startup function "initiates the use of the Winsock DLL" -MSDN
-
-	WSADATA wsaData;   // if this doesn't work
-						//WSAData wsaData; // then try this instead
-
-						// MAKEWORD(1,1) for Winsock 1.1, MAKEWORD(2,0) for Winsock 2.0:
-
-	if (WSAStartup(MAKEWORD(1, 1), &wsaData) != 0) {
-		fprintf(stderr, "WSAStartup failed.\n");
-		exit(1);
-	}
-
 	int status;
-	SOCKET s = INVALID_SOCKET;  // The server socket
-	SOCKET c = INVALID_SOCKET; // The client in the control connection.
-	int recvRetVal, bindRetVal, listenRetVal, sendRetVal;
+    int  s = 0;  // The server socket
+	int c = 0; // The client in the control connection.
+	int recvRetVal, bindRetVal, listenRetVal;//TODO: figure out return values., sendRetVal;
+    socklen_t addrlen = sizeof(struct sockaddr_storage);
 	struct addrinfo hints;
 	struct addrinfo *servinfo = NULL;  // will point to the results
 	struct sockaddr_storage c_addr;  // Address info for client control connection
-	socklen_t addrlen = sizeof(struct sockaddr_storage);
 	char buffer[RECV_BUF_LEN];
 
 	memset(&hints, 0, sizeof hints); // Zero-out hints
@@ -114,13 +104,11 @@ int waitForClient(const char  *portno) {
 	//Accept clients until interrupt is received. TODO: gracefully accept a shutdown command or signal
 	while (true) {
 		// TODO: handle errno on accept()
-		if ((c = accept(s, (struct sockaddr *)&c_addr, &addrlen)) == INVALID_SOCKET) {
-			closesocket(s);
-			WSACleanup();  //TODO: Windows-specific func to remove.
+		if ((c = accept(s, (struct sockaddr *)&c_addr, &addrlen)) == -1) {
+			close(s);
 			cout << "Error on accept()\n";
 			return 0;
 		}
-
 
 		//TODO: remove sample code
 		//do-while loop is all sample code from MSDN
@@ -131,33 +119,35 @@ int waitForClient(const char  *portno) {
 			if (recvRetVal > 0) {
 				printf("Bytes received: %d\n", recvRetVal);
 				string bufString(buffer);
-				bufString = bufString.substr(0, recvRetVal);
+				
+                bufString = bufString.substr(0, recvRetVal);
 				cout << "Received " << bufString << " from client\n";
-				string response = parseCommand(bufString, &dataPortNo);
-				//TODO: fix addrlen arg type for linux
-				sendResponse(response, (struct sockaddr *)&c_addr, (int *)&addrlen, dataPortNo);
+                string response = parseCommand(bufString, &dataPortNo);			
+                sendResponse(
+                        response, 
+                        (struct sockaddr*)&c_addr, 
+                        (socklen_t*) &addrlen, 
+                        dataPortNo);
 
 			}
 			else if (recvRetVal == 0)
 				printf("Connection closing...\n");
 			else {
-				printf("recv failed with error: %d\n", WSAGetLastError());
-				closesocket(c); //TODO: change to "close()" for linux.
-				WSACleanup();  //TODO: windows-specific to remove.
+				//TODO: linux error code. printf("recv failed with error: %d\n", WSAGetLastError());
+				close(c); 
 				return 1;
 			}
 		} while (recvRetVal > 0);
 	}
-	closesocket(s);
+	close(s);
 
-	WSACleanup(); // TODO: get rid of this function: Windows-specific.
 	return 0;
 
 }
 
-int sendResponse(std::string response, struct sockaddr * clientAddr, int *addrlen, int portNo){
+int sendResponse(string response, struct sockaddr* clientAddr, socklen_t* addrlen, int portNo){
 	//Create data structures for connection
-	SOCKET dataSocket = INVALID_SOCKET;
+	int dataSocket = 0;
 	
 	// The following code is borrowed heavily from Beej's guide because I am 
 	// learning from it. Note that I am commenting heavily, indicating that
@@ -174,16 +164,16 @@ int sendResponse(std::string response, struct sockaddr * clientAddr, int *addrle
 	// Cast struct sockaddr clientAddr as struct sockaddr_in and get sin_addr member(ipv addr).
 	// Then, convert byte order.
 	char *ip = inet_ntoa(((sockaddr_in*)clientAddr)->sin_addr);
-	char portNumber[6];
-	memset(&portNumber, 0, sizeof(char) * 6);
-	itoa(portNo, portNumber, 10);
-	int status = getaddrinfo(ip, portNumber, &hints, &serverInfo);
+	string portNumber = to_string((long long)portNo);
+	//memset(&portNumber, 0, sizeof(char) * 6);
+	//itoa(portNo, portNumber, 10);
+	int status = getaddrinfo(ip, portNumber.c_str(), &hints, &serverInfo);
 
 	dataSocket = socket(serverInfo->ai_family, serverInfo->ai_socktype, serverInfo->ai_protocol);
 	connect(dataSocket, serverInfo->ai_addr, serverInfo->ai_addrlen);
 	const char *charResponse = response.c_str();
 	send(dataSocket, charResponse, response.length(), 0);
-	closesocket(dataSocket);
+	close(dataSocket);
 	cout << "client ip: " << ip << "\n";
 
 
@@ -194,7 +184,7 @@ int sendResponse(std::string response, struct sockaddr * clientAddr, int *addrle
 	return 1;
 }
 
-string parseCommand(string msg, int *portNo) {
+std::string parseCommand(string msg, int *portNo) {
 	string message(msg);
 	string returnMSG = "";
 	cout << "parseCommand() is parsing " << message << "\n";

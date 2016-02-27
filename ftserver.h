@@ -16,6 +16,10 @@
 #define LIST_COMMAND "l"
 int waitForClient(const char *portno);
 int getPort(int argc, char** argv);
-int sendResponse(std::string response, struct sockaddr * clientAddr, int *addrlen, int portNo);
+int sendResponse(
+        std::string response, 
+        struct sockaddr *clientAddr, 
+        socklen_t *addrlen, 
+        int portNo);
 std::string parseCommand(std::string msg, int *portNo);
 #endif
