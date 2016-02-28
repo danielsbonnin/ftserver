@@ -1,4 +1,6 @@
 #include <iostream>
+#include <limits.h>
+#include <dirent.h>
 #include "ftserver.h"
 #include <string>
 #include <cstring>
@@ -9,6 +11,7 @@
 #include <stdio.h>
 #include <netinet/in.h> //For inet_ntoa()
 #include <arpa/inet.h>
+#include <errno.h>
 using namespace std;
 
 
@@ -23,7 +26,6 @@ int main(int argc, char** argv) {
 	cout << "You entered port number: " << portno << "\n";
 	waitForClient(to_string((long long)portno).c_str());  //Call server function on port arg.
 
-	getchar();  // TODO: Windows so the cmd window stays open long enough to read.
 	return 0;
 }
 
@@ -32,8 +34,6 @@ int getPort(int argc, char **argv) {
 
 	if (argc != 2) { //Invalid num args.
 		cout << "Invalid Command Line Arguments\n" << USAGE;
-		// TODO: remove this for linux.
-		getchar();
 		return -1;
 	}
 
@@ -46,12 +46,10 @@ int getPort(int argc, char **argv) {
 	catch (const invalid_argument &e) // non-integer entered.
 	{
 		cout << "Please enter an integer port argument.\n" << USAGE;
-		getchar(); //TODO: remove this for linux.
 		return -1;
 	}
 	if (portno < PORT_MIN || portno > PORT_MAX) {
 		cout << "Port Number argument out of range\n" << USAGE;
-		getchar();  //TODO: remove this for linux.
 		return -1;
 	}
 	else
@@ -104,9 +102,9 @@ int waitForClient(const char *portno) {
 	//Accept clients until interrupt is received. TODO: gracefully accept a shutdown command or signal
 	while (true) {
 		// TODO: handle errno on accept()
-		if ((c = accept(s, (struct sockaddr *)&c_addr, &addrlen)) == -1) {
-			close(s);
-			cout << "Error on accept()\n";
+		if ((c = accept(s, (struct sockaddr *)&c_addr, &addrlen)) == -1) {	
+			perror(" Accept Error");
+            close(s);
 			return 0;
 		}
 
@@ -123,6 +121,7 @@ int waitForClient(const char *portno) {
                 bufString = bufString.substr(0, recvRetVal);
 				cout << "Received " << bufString << " from client\n";
                 string response = parseCommand(bufString, &dataPortNo);			
+                sleep(1);  //Allow client time to open a socket.
                 sendResponse(
                         response, 
                         (struct sockaddr*)&c_addr, 
@@ -130,11 +129,14 @@ int waitForClient(const char *portno) {
                         dataPortNo);
 
 			}
-			else if (recvRetVal == 0)
+			else if (recvRetVal == 0) {
 				printf("Connection closing...\n");
-			else {
-				//TODO: linux error code. printf("recv failed with error: %d\n", WSAGetLastError());
-				close(c); 
+                close(c);
+		    }	
+            else {
+				//TODO: remove debugging print statement below
+				perror("Recv Error:");
+                close(c); 
 				return 1;
 			}
 		} while (recvRetVal > 0);
@@ -146,7 +148,11 @@ int waitForClient(const char *portno) {
 }
 
 int sendResponse(string response, struct sockaddr* clientAddr, socklen_t* addrlen, int portNo){
-	//Create data structures for connection
+    int connectRetVal = 0;
+    int sendRetVal = 0;    
+    //TODO: Remove debugging print statement below:
+    cout << "Entering sendResponse() \n"; 
+    //Create data structures for connection
 	int dataSocket = 0;
 	
 	// The following code is borrowed heavily from Beej's guide because I am 
@@ -165,14 +171,25 @@ int sendResponse(string response, struct sockaddr* clientAddr, socklen_t* addrle
 	// Then, convert byte order.
 	char *ip = inet_ntoa(((sockaddr_in*)clientAddr)->sin_addr);
 	string portNumber = to_string((long long)portNo);
-	//memset(&portNumber, 0, sizeof(char) * 6);
+    //TODO: remove this debugging print statement
+    cout << "The client' s proposed data port number: " << portNumber;	
+    //memset(&portNumber, 0, sizeof(char) * 6);
 	//itoa(portNo, portNumber, 10);
 	int status = getaddrinfo(ip, portNumber.c_str(), &hints, &serverInfo);
-
+    //TODO: remove the following debugging statement
+    cout << "getaddrinfo() returned: " << status;
 	dataSocket = socket(serverInfo->ai_family, serverInfo->ai_socktype, serverInfo->ai_protocol);
-	connect(dataSocket, serverInfo->ai_addr, serverInfo->ai_addrlen);
-	const char *charResponse = response.c_str();
-	send(dataSocket, charResponse, response.length(), 0);
+	connectRetVal = connect(dataSocket, serverInfo->ai_addr, serverInfo->ai_addrlen);
+    if (connectRetVal != 0) {
+        //TODO: Remove debugging print statement
+        perror("Connect error ");
+    }    
+    const char *charResponse = response.c_str();
+	sendRetVal = send(dataSocket, charResponse, response.length(), MSG_NOSIGNAL);
+    if (sendRetVal == -1) {
+        //TODO: Remove debugging print statement and replace with good errmsg
+        perror("Send error"); 
+    } 
 	close(dataSocket);
 	cout << "client ip: " << ip << "\n";
 
@@ -211,16 +228,41 @@ std::string parseCommand(string msg, int *portNo) {
 		returnMSG = "<ok><name>VALID-NAME</name><data>VALID-DATA and bunch of lines and junk</data></ok>";
 	}
 	else if (command.compare(LIST_COMMAND) == 0) {
-		//List files in current directory into a string
-		string fileNames = "";
+        
+		//List files in current directory into a tag-delimited string
+		string fileNames = lsCWD();
 		//encapsulate files into a message
-		returnMSG = "<ok><list><item>FIRST-NAME</item><item>SECOND-NAME</item></list></ok>";
+		returnMSG = "<ok><list>" + fileNames + " </list></ok>";
 	}
 	else {
 		//encapsulate error message into a message
 		returnMSG = "<error>Command " + command + " not recognized</error>";
 	}
-	//send back message
-	cout << returnMSG;
+	//TODO: Remove debugging print statement below
+	//cout << returnMSG;
 	return returnMSG;
+}
+
+string lsCWD() {
+    char *cwd = NULL;
+    struct dirent *dirStream;
+    string returnString = "";
+    //Get cwd path. Dynamically allocated.
+    cwd = getcwd(cwd, NULL);  
+    DIR *thisDir = opendir(cwd);
+    if (!thisDir) {
+        perror ("Opendir");
+    }
+    
+    //Help obtained from the accepted answer at SO here:
+    //stackoverflow.com/questions/3554120/open-directory-using-c
+    while ((dirStream = readdir(thisDir)) != NULL){
+        returnString.append("<item>");
+        returnString.append(dirStream->d_name);
+        returnString.append("</item>");
+    }
+     
+    free(cwd);
+    closedir(thisDir);
+    return returnString;  
 }

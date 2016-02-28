@@ -2,7 +2,6 @@
 #^
 import argparse
 import socket
-import socketserver
 import re
 
 #Command identifiers. Go inside html style <\> tags to be sent to server. 
@@ -30,13 +29,13 @@ def main():
     commandMSG = parseCommand(args)
     sendCommand(cntrl, commandMSG)
     data = receiveData(dataSocket, args)
+    print("Received from server: " + data)
     cntrl.close()
     dataSocket.close()
     parseServerData(data)
 
     
     
-    input() #TODO: fix raw_input/input issue
     exit(0)
 
 def cliHandler():
@@ -77,10 +76,10 @@ def initContact(args, s):
     #This error handling code heavily influenced by the accepted answer here:
     #stackoverflow.com/questions/177389/testing-socket-connection-in-python
     try:
-        s.connect((args.hostname, args.port))
+        s.connect((args.hostname, args.SERVER_PORT))
     except Exception as e:
         print(args.hostname + ':' +
-              str(args.port) +
+              str(args.SERVER_PORT) +
               ' does not seem to be responding.')
         #print(e)
         s.close()
@@ -102,7 +101,7 @@ def sendCommand(s, commandMSG):
             exit(1)
 
 def receiveData(dataSocket, args):
-    dataSocket.bind(('', int(args.DATA_PORT)))
+    dataSocket.bind(('localhost', int(args.DATA_PORT)))
     dataSocket.listen(1)
     data, serverAddr = dataSocket.accept()
     return data.recv(1024).decode('utf-8')

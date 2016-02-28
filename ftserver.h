@@ -22,4 +22,5 @@ int sendResponse(
         socklen_t *addrlen, 
         int portNo);
 std::string parseCommand(std::string msg, int *portNo);
+std::string lsCWD();
 #endif
