@@ -126,9 +126,10 @@ def printList(serverMessage):
 
 def saveFile(serverMessage):
     filename = parseTag(NAME_TAG, serverMessage)
-    data = parseTag(DATA_TAG, serverMessage)
+    fileData = parseTag(DATA_TAG, serverMessage)
+    print("data: ", fileData[0])
     newFile = open(filename[0], 'w+')
-    newFile.write(data[0])
+    newFile.write(fileData[0])
     newFile.close()
     
     print("contents of new file: " + filename[0] + ": ")
@@ -152,9 +153,10 @@ def parseTag(tag, msg):
     openTag = '<' + tag + '>'
     closeTag = '</' + tag + '>'
     if openTag not in msg or closeTag not in msg:
+        print("***TAG NOT FOUND***")
         return None
     else:
-        return re.findall(openTag + '(.*?)' + closeTag, msg)
+        return re.findall(openTag + '(.*?)' + closeTag, msg, re.DOTALL)
     
 if (__name__ == '__main__'):
     main()

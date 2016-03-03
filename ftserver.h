@@ -14,7 +14,7 @@
 #define RECV_BUF_LEN 1024
 #define GET_COMMAND "g"
 #define LIST_COMMAND "l"
-int waitForClient(const char *portno);
+int waitForClient(const char *portno, bool *notKilled);
 int getPort(int argc, char** argv);
 int sendResponse(
         std::string response, 
@@ -23,4 +23,6 @@ int sendResponse(
         int portNo);
 std::string parseCommand(std::string msg, int *portNo);
 std::string lsCWD();
+bool fileExists(std::string filename);
+std::string fileAsString(std::string);
 #endif

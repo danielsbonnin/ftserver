@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <limits.h>
 #include <dirent.h>
 #include "ftserver.h"
@@ -12,19 +13,28 @@
 #include <netinet/in.h> //For inet_ntoa()
 #include <arpa/inet.h>
 #include <errno.h>
+#include <csignal>
 using namespace std;
 
+bool notKilled = true;
 
-
+static void signalHandler(int signum) {
+    cout << "Keyboard interrupt received\n";
+    notKilled = false;
+    exit (signum);
+}
 int main(int argc, char** argv) {
-	int portno = getPort(argc, argv);
+    signal(SIGINT, signalHandler);   
+    int portno = getPort(argc, argv);
 	
 	if (portno == -1)  //Invalid command line port input
 		return 0;  //quit gracefully.
 
 	
 	cout << "You entered port number: " << portno << "\n";
-	waitForClient(to_string((long long)portno).c_str());  //Call server function on port arg.
+    
+    //Call server function on port arg.
+	waitForClient(to_string((long long)portno).c_str(), &notKilled);
 
 	return 0;
 }
@@ -61,17 +71,18 @@ int getPort(int argc, char **argv) {
  * @param portno port number to listen on.
  * @pre portno is valid.
  */
-int waitForClient(const char *portno) {
+int waitForClient(const char *portno, bool *notKilled) {
 	
 	// The following is copy-paste from Beej's guide. Comments are mine (some)
 	int status;
     int  s = 0;  // The server socket
 	int c = 0; // The client in the control connection.
-	int recvRetVal, bindRetVal, listenRetVal;//TODO: figure out return values., sendRetVal;
+	int recvRetVal;
     socklen_t addrlen = sizeof(struct sockaddr_storage);
 	struct addrinfo hints;
-	struct addrinfo *servinfo = NULL;  // will point to the results
-	struct sockaddr_storage c_addr;  // Address info for client control connection
+	struct addrinfo *servinfo;  // will point to the results
+	struct addrinfo *next;  // Next in linked list of ip addresses
+    struct sockaddr_storage c_addr;  // Address info for client control connection
 	char buffer[RECV_BUF_LEN];
 
 	memset(&hints, 0, sizeof hints); // Zero-out hints
@@ -80,30 +91,46 @@ int waitForClient(const char *portno) {
 	hints.ai_flags = AI_PASSIVE; // fill in my ip for me
 
 	if ((status = getaddrinfo(NULL, portno, &hints, &servinfo)) != 0) {
-		// TODO: handle errno with getaddrinfo
-		cout << "Error with getaddrinfo\n";
+		perror("Error with getaddrinfo");
 		exit(1);
 	}
+    
+    // The following for loop heavily borrowed from Beej's guide (link above)
+	// Walk the linked list of struct addrinfos in order to find a valid one. 
+	for (next = servinfo; next != NULL; next = next->ai_next) {
+        // Init the server socket
+        if ((s = socket(
+                next->ai_family, 
+                next->ai_socktype, 
+                next->ai_protocol))
+                == -1) {
+            // Call to socket failed. 
+            // Report error, but try the next addrinfo in linked list.
+            perror("Server socket");
+            continue;
+        }
 
-	// servinfo now points to a linked list of 1 or more struct addrinfos
-	//TODO: walk the linked list of struct addrinfos in order to find a valid one. ?
-	// Init the server socket.
-	s = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
-
-	// Bind socket to port (specified in struct addrinfo hints)
-	bindRetVal = bind(s, servinfo->ai_addr, servinfo->ai_addrlen);
+	    // Bind socket to port (specified in struct addrinfo hints)
+	    if (bind(s, servinfo->ai_addr, servinfo->ai_addrlen) == -1) {
+            close(s);
+            // Call to bind() failed. 
+            // Report error, but try the next addrinko in linked list.
+            perror("Bind");
+            continue;
+        }
+    }
 	freeaddrinfo(servinfo);
 
-	// TODO: handle errno on listen().
-	if ((listenRetVal = listen(s, MAX_INCOMING_CONNECTIONS)) == -1) {
-		cout << "Error on listen()\n";
-	}
 	
-	//Accept clients until interrupt is received. TODO: gracefully accept a shutdown command or signal
-	while (true) {
-		// TODO: handle errno on accept()
+	if ((listen(s, MAX_INCOMING_CONNECTIONS)) == -1) {
+	    perror("Listen");
+        exit(1);
+    }
+	
+	//Accept clients until interrupt is received. 
+	while (*notKilled) {
 		if ((c = accept(s, (struct sockaddr *)&c_addr, &addrlen)) == -1) {	
-			perror(" Accept Error");
+			perror("Accept");
             close(s);
 			return 0;
 		}
@@ -127,94 +154,96 @@ int waitForClient(const char *portno) {
                         (struct sockaddr*)&c_addr, 
                         (socklen_t*) &addrlen, 
                         dataPortNo);
-
 			}
 			else if (recvRetVal == 0) {
 				printf("Connection closing...\n");
                 close(c);
 		    }	
             else {
-				//TODO: remove debugging print statement below
-				perror("Recv Error:");
+			    perror("Recv");
                 close(c); 
-				return 1;
 			}
 		} while (recvRetVal > 0);
 	}
+    // Close server and client sockets.
+    close(c);
 	close(s);
 
 	return 0;
-
 }
 
-int sendResponse(string response, struct sockaddr* clientAddr, socklen_t* addrlen, int portNo){
+int sendResponse(
+        string response, 
+        struct sockaddr* clientAddr, 
+        socklen_t* addrlen, int portNo){
     int connectRetVal = 0;
     int sendRetVal = 0;    
-    //TODO: Remove debugging print statement below:
-    cout << "Entering sendResponse() \n"; 
+   
     //Create data structures for connection
 	int dataSocket = 0;
 	
 	// The following code is borrowed heavily from Beej's guide because I am 
 	// learning from it. Note that I am commenting heavily, indicating that
 	// I understand the purpose of each line. 
-	// Source: https://beej.us/guide/bgnet/output/html/multipage/syscalls.html#getpeername
+	// Source: https://beej.us/guide/bgnet/output/html/multipage/(continued)
+    // (continuation)syscalls.html#getpeername
 	struct addrinfo hints;
-	struct addrinfo *serverInfo; //The client program is the "server" for this data connection.
+    
+    //The client program is the "server" for this data connection.
+	struct addrinfo *serverInfo; 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
 	// Ip address parsing help obtained from accepted answer here:
-	// http://stackoverflow.com/questions/1276294/getting-ipv4-address-from-a-sockaddr-structure
-	// Cast struct sockaddr clientAddr as struct sockaddr_in and get sin_addr member(ipv addr).
-	// Then, convert byte order.
+	// http://stackoverflow.com/questions/1276294/(continued)
+    // (continuation)getting-ipv4-address-from-a-sockaddr-structure
+	// Cast struct sockaddr clientAddr as struct sockaddr_in
+    // get sin_addr member(ipv4 addr).
+	// convert byte order.
 	char *ip = inet_ntoa(((sockaddr_in*)clientAddr)->sin_addr);
 	string portNumber = to_string((long long)portNo);
-    //TODO: remove this debugging print statement
-    cout << "The client' s proposed data port number: " << portNumber;	
-    //memset(&portNumber, 0, sizeof(char) * 6);
-	//itoa(portNo, portNumber, 10);
-	int status = getaddrinfo(ip, portNumber.c_str(), &hints, &serverInfo);
-    //TODO: remove the following debugging statement
-    cout << "getaddrinfo() returned: " << status;
-	dataSocket = socket(serverInfo->ai_family, serverInfo->ai_socktype, serverInfo->ai_protocol);
+	if ((getaddrinfo(ip, portNumber.c_str(), &hints, &serverInfo))== -1) {
+        perror("getaddrinfo");
+    }
+	dataSocket = socket(
+            serverInfo->ai_family, 
+            serverInfo->ai_socktype, 
+            serverInfo->ai_protocol);
 	connectRetVal = connect(dataSocket, serverInfo->ai_addr, serverInfo->ai_addrlen);
     if (connectRetVal != 0) {
-        //TODO: Remove debugging print statement
-        perror("Connect error ");
+        perror("Connect");
     }    
     const char *charResponse = response.c_str();
 	sendRetVal = send(dataSocket, charResponse, response.length(), MSG_NOSIGNAL);
     if (sendRetVal == -1) {
-        //TODO: Remove debugging print statement and replace with good errmsg
-        perror("Send error"); 
+        perror("Send"); 
     } 
 	close(dataSocket);
-	cout << "client ip: " << ip << "\n";
-
-
-	//call connect on specific addr/port
-	//send response
-	//close connection
-	cout << "Entered sendFile() with data port number: " << portNo << "\n";
 	return 1;
 }
-
+string parseTag(string tag, string msg) {
+    int dataLength;
+    const string openTag("<" + tag + ">");
+    const string closeTag("</" + tag + ">");
+    dataLength = msg.find(closeTag) - msg.find(openTag) - openTag.length();
+    if ( dataLength > 0)
+        return msg.substr((msg.find(openTag) + openTag.length()), dataLength);
+    else 
+        return "";
+}
 std::string parseCommand(string msg, int *portNo) {
 	string message(msg);
+    string command;
+    string port;
 	string returnMSG = "";
-	cout << "parseCommand() is parsing " << message << "\n";
 
 	//Command is 1 letter long.
-	//TODO: redo all the message processing in a function.
-	string command = message.substr(message.find_first_of('<') + 1, 1);
-	string portTag("<dataport>");
-	string portTagEnd("</dataport>");
-	int lenPort = message.find(portTagEnd) - message.find(portTag) - portTag.length();
-	string port = message.substr(message.find(portTag) + portTag.length(), lenPort);
-	cout << "the port number sent by the client is: " << port <<  "\n";
-	*portNo = stoi(port);
+	command = message.substr(message.find_first_of('<') + 1, 1);
+    
+    port = parseTag("dataport", message);
+	cout << "parseTag port result: " << port<< endl;
+    *portNo = stoi(port);
 
 	
 	//Check for "Get" command
@@ -222,13 +251,23 @@ std::string parseCommand(string msg, int *portNo) {
 		//Look for filename
 		int lenFilename = (int) (message.find("</g>") - message.find("<g>") - 3);
 		string filename = message.substr(message.find("<g>") + 3, lenFilename);
-		cout << "The filename received was " << filename << "\n";
-		//TODO: validate filename
-		//encapsulate file in message
-		returnMSG = "<ok><name>VALID-NAME</name><data>VALID-DATA and bunch of lines and junk</data></ok>";
+		cout << "File " << filename << "requested on port " << port << "\n";
+        if(fileExists(filename)) {
+            returnMSG = 
+                "<ok><name>"            + 
+                filename                + 
+                "</name><data>"         + 
+                fileAsString(filename)  +   
+                "</data></ok>";
+            cout << "Sending " << filename << " to client.\n"; 
+        }
+        else {
+            returnMSG = "<error>There is no such file</error>";
+            cout << "The requested file does not exist, sending error msg\n";
+        }
 	}
 	else if (command.compare(LIST_COMMAND) == 0) {
-        
+        cout << "List directory requested on port " << port << " \n";    
 		//List files in current directory into a tag-delimited string
 		string fileNames = lsCWD();
 		//encapsulate files into a message
@@ -238,11 +277,46 @@ std::string parseCommand(string msg, int *portNo) {
 		//encapsulate error message into a message
 		returnMSG = "<error>Command " + command + " not recognized</error>";
 	}
-	//TODO: Remove debugging print statement below
-	//cout << returnMSG;
 	return returnMSG;
 }
 
+string fileAsString(string filename) {
+    // File stream refresher provided by:
+    // www.cplusplus.com/doc/tutorial/files
+    string line, fileString = "";
+    ifstream file(filename);
+    if (file.is_open()) {
+        // Below while loop obtained from source (above)
+        while (getline(file, line))
+            fileString.append(line + "\n");
+        file.close();
+    }
+    else
+        cout << "Error reading file";
+    return fileString;
+}
+bool fileExists(string fileName) {
+    bool fileFound = false;
+    char *cwd = NULL;
+    struct dirent *dirStream;
+    string returnString = "";
+    //Get cwd path. Dynamically allocated.
+    cwd = getcwd(cwd, NULL);
+    DIR *thisDir = opendir(cwd);
+    if (!thisDir) {
+        perror ("Opendir");
+    }
+    while ((dirStream = readdir(thisDir)) != NULL) {
+        if (fileName.compare(dirStream->d_name) == 0) {
+            fileFound =  true;
+            break;
+        }
+    }
+    free(cwd);
+    closedir(thisDir);   
+    return fileFound;
+
+}
 string lsCWD() {
     char *cwd = NULL;
     struct dirent *dirStream;
