@@ -9,4 +9,5 @@ Debug/
 Release/
 ftserver
 *.swp
-.test/
+test/
+testfile
