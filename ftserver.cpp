@@ -1,35 +1,53 @@
-#include <iostream>
-#include <fstream>
-#include <limits.h>
-#include <dirent.h>
-#include "ftserver.h"
+/**
+ * File:    ftserver.cpp
+ * Author:  Daniel Bonnin
+ * email:   bonnind@oregonstate.edu
+ *
+ * Descr:   This file contains the implementation of ftserver, a simple 
+ *          server-client file transfer application.
+ *
+ *          ftserver provides 2 services: 1) "list": list the contents of the
+ *          current directory 2) "Get File": Get the requested file by name.
+ *
+ *          ftserver fulfills requests over a second tcp connection on a 
+ *          port specified by the client. 
+ *
+ *          ftserver will wait on the specified port until a client connects
+ *          or a keyboard interrupt is received.  
+ */
+
+#include <iostream>    
+#include <stdio.h>
 #include <string>
 #include <cstring>
-#include <stdexcept>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <stdio.h>
-#include <netinet/in.h> //For inet_ntoa()
-#include <arpa/inet.h>
-#include <errno.h>
-#include <csignal>
+#include <fstream>      // file io
+#include <dirent.h>     // directory services
+#include <stdexcept>    // exception handling  
+#include <netdb.h>      // socket-related data structures (addrinfo etc)
+#include <arpa/inet.h>  // inet_ntoa()
+#include <csignal>      // signal handling
+#include "ftserver.hpp"
 using namespace std;
 
-bool notKilled = true;
+bool notKilled = true; // Do not gracefully quit
 
+// Handle keyboard interrupt.
+// Print status message
+// Set notKilled to true
 static void signalHandler(int signum) {
     cout << "Keyboard interrupt received\n";
     notKilled = false;
     exit (signum);
 }
-int main(int argc, char** argv) {
-    signal(SIGINT, signalHandler);   
-    int portno = getPort(argc, argv);
-	
-	if (portno == -1)  //Invalid command line port input
-		return 0;  //quit gracefully.
 
+int main(int argc, char** argv) {
+    int portno = 0;
+    // Connect signal handler to gracefully close server socket on interrupt
+    signal(SIGINT, signalHandler);   
+
+    // Get valid port number argument
+    if ((portno = getPort(argc, argv)) == -1)
+	    return 0;  // Gracefully close on invalid port argument.
 	
 	cout << "You entered port number: " << portno << "\n";
     
@@ -39,6 +57,12 @@ int main(int argc, char** argv) {
 	return 0;
 }
 
+/**
+ * Process commandline args
+ *
+ * @param argv Commandline argument array
+ * @return valid port number or -1
+ */
 int getPort(int argc, char **argv) {
 	int portno = 0;
 
@@ -47,7 +71,8 @@ int getPort(int argc, char **argv) {
 		return -1;
 	}
 
-	/* Help for exception handling: 
+	/* 
+     * Help for exception handling: 
 	 * http://www.cplusplus.com/reference/stdexcept/invalid_argument/
 	 */
 	try {
@@ -58,6 +83,8 @@ int getPort(int argc, char **argv) {
 		cout << "Please enter an integer port argument.\n" << USAGE;
 		return -1;
 	}
+
+    // Port number argument out of range
 	if (portno < PORT_MIN || portno > PORT_MAX) {
 		cout << "Port Number argument out of range\n" << USAGE;
 		return -1;
@@ -67,32 +94,38 @@ int getPort(int argc, char **argv) {
 }
 
 /*
- * Much help obtained from Beej's Guide: Beej.us/quide
+ * Wait on a socket for a client to connect.   
+ * 
  * @param portno port number to listen on.
+ * @param notKilled whether keyboard interrupt has been received
+ *
  * @pre portno is valid.
  */
 int waitForClient(const char *portno, bool *notKilled) {
 	
-	// The following is copy-paste from Beej's guide. Comments are mine (some)
 	int status;
     int  s = 0;  // The server socket
 	int c = 0; // The client in the control connection.
-	int recvRetVal;
+	int recvRetVal; // Bytes read or error
+
+    // Obtained much socket data structure help from Beej's Guide: 
+    // https://beej.us/guide/bgnet/output/html/multipage/ipstructsdata.html
     socklen_t addrlen = sizeof(struct sockaddr_storage);
 	struct addrinfo hints;
 	struct addrinfo *servinfo;  // will point to the results
 	struct addrinfo *next;  // Next in linked list of ip addresses
-    struct sockaddr_storage c_addr;  // Address info for client control connection
-	char buffer[RECV_BUF_LEN];
+    struct sockaddr_storage c_addr;  // Address info about client
+	char buffer[RECV_BUF_LEN];  // holds incoming data
 
 	memset(&hints, 0, sizeof hints); // Zero-out hints
 	hints.ai_family = AF_INET;  // ipv4 socket
 	hints.ai_socktype = SOCK_STREAM; // TCP, not UDP
 	hints.ai_flags = AI_PASSIVE; // fill in my ip for me
 
+    // Fill in socket info from hints into servinfo
 	if ((status = getaddrinfo(NULL, portno, &hints, &servinfo)) != 0) {
 		perror("Error with getaddrinfo");
-		exit(1);
+		return 0;
 	}
     
     // The following for loop heavily borrowed from Beej's guide (link above)
@@ -119,52 +152,69 @@ int waitForClient(const char *portno, bool *notKilled) {
             continue;
         }
     }
-	freeaddrinfo(servinfo);
 
-	
+    // Free the memory for servinfo now that it's not needed
+    freeaddrinfo(servinfo);
+
+    // Prepare socket s to accept clients
 	if ((listen(s, MAX_INCOMING_CONNECTIONS)) == -1) {
 	    perror("Listen");
-        exit(1);
+        return 0;
     }
 	
-	//Accept clients until interrupt is received. 
+	// Accept clients until interrupt is received. 
 	while (*notKilled) {
+
+        // Client has attempted to connect
 		if ((c = accept(s, (struct sockaddr *)&c_addr, &addrlen)) == -1) {	
 			perror("Accept");
             close(s);
 			return 0;
 		}
 
-		//TODO: remove sample code
-		//do-while loop is all sample code from MSDN
-		// Receive until the peer shuts down the connection
+		// Help for the following do-while loop obtained at msdn:
+        // msdn.microsoft.com/en-us/windows/desktop/bb530746(v=vs.85).aspx 
+        
+		// Loop recv until no more data to read.
 		do {
 			int dataPortNo = 0;
 			recvRetVal = recv(c, buffer, RECV_BUF_LEN, 0);
 			if (recvRetVal > 0) {
-				printf("Bytes received: %d\n", recvRetVal);
-				string bufString(buffer);
+                
+                // Create a std::string from the buffer
+                string bufString(buffer);
 				
+                // Ensure that no junk data is included in bufString
                 bufString = bufString.substr(0, recvRetVal);
-				cout << "Received " << bufString << " from client\n";
-                string response = parseCommand(bufString, &dataPortNo);			
-                sleep(1);  //Allow client time to open a socket.
+
+                // get a formatted response to send to client
+                string response = parseCommand(bufString, &dataPortNo);
+
+                // Allow client time to open a socket and listen.   
+                sleep(1);
+
+                // Send response to client on client-specified port 
                 sendResponse(
                         response, 
                         (struct sockaddr*)&c_addr, 
                         (socklen_t*) &addrlen, 
                         dataPortNo);
 			}
+
+            // All data has been received
 			else if (recvRetVal == 0) {
-				printf("Connection closing...\n");
+				cout << "Connection closing..." << endl;
                 close(c);
 		    }	
+
+            // -1 indicates an error condition
             else {
 			    perror("Recv");
                 close(c); 
 			}
 		} while (recvRetVal > 0);
 	}
+
     // Close server and client sockets.
     close(c);
 	close(s);
@@ -172,121 +222,200 @@ int waitForClient(const char *portno, bool *notKilled) {
 	return 0;
 }
 
+/**
+ *  Send response to client on specified port
+ *
+ *  @param response the entire data to send
+ *  @param clientAddr ip address of client
+ *  @param portno the port specified by client 
+ */
 int sendResponse(
         string response, 
         struct sockaddr* clientAddr, 
-        socklen_t* addrlen, int portNo){
-    int connectRetVal = 0;
-    int sendRetVal = 0;    
+        socklen_t* addrlen, 
+        int portNo){
    
     //Create data structures for connection
 	int dataSocket = 0;
 	
-	// The following code is borrowed heavily from Beej's guide because I am 
-	// learning from it. Note that I am commenting heavily, indicating that
-	// I understand the purpose of each line. 
-	// Source: https://beej.us/guide/bgnet/output/html/multipage/(continued)
-    // (continuation)syscalls.html#getpeername
-	struct addrinfo hints;
+	/* 
+     * Much of the socket code in this function is paraphrased from Beej's guide
+     * I tried to make this my original work, but I fully attribute any 
+     * similarities of this file to Beej's guide to the author of that 
+     * guide. 
+	 * Source: https://beej.us/guide/bgnet/output/html/multipage/(continued)
+     * (continuation)syscalls.html#getpeername
+     */
+	struct addrinfo hints;  // Address struct to fill for socket
     
     //The client program is the "server" for this data connection.
 	struct addrinfo *serverInfo; 
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
 
-	// Ip address parsing help obtained from accepted answer here:
-	// http://stackoverflow.com/questions/1276294/(continued)
-    // (continuation)getting-ipv4-address-from-a-sockaddr-structure
-	// Cast struct sockaddr clientAddr as struct sockaddr_in
-    // get sin_addr member(ipv4 addr).
-	// convert byte order.
+    // Zero-out the memory of hints.
+	memset(&hints, 0, sizeof(hints));
+
+	hints.ai_family = AF_UNSPEC;  
+	hints.ai_socktype = SOCK_STREAM;  // TCP socket
+    
+    /*
+	 * Ip address parsing help obtained from accepted answer here:
+	 * http://stackoverflow.com/questions/1276294/(continued)
+     * (continuation)getting-ipv4-address-from-a-sockaddr-structure
+	 */
+    
+    // convert byte order to network byte order (for portability)
 	char *ip = inet_ntoa(((sockaddr_in*)clientAddr)->sin_addr);
-	string portNumber = to_string((long long)portNo);
+	
+    // Get portnumber into a cstring for use in getaddrinfo()
+    string portNumber = to_string((long long)portNo);
+
+    // Set up serverInfo struct
 	if ((getaddrinfo(ip, portNumber.c_str(), &hints, &serverInfo))== -1) {
         perror("getaddrinfo");
+        return 0;
     }
+
+    // Create client socket on serverInfo struct info
 	dataSocket = socket(
             serverInfo->ai_family, 
             serverInfo->ai_socktype, 
             serverInfo->ai_protocol);
-	connectRetVal = connect(dataSocket, serverInfo->ai_addr, serverInfo->ai_addrlen);
-    if (connectRetVal != 0) {
+	
+    // Create TCP connection
+    if (connect(dataSocket, serverInfo->ai_addr, serverInfo->ai_addrlen) != 0) {
         perror("Connect");
+        close(dataSocket);
+        return 0;
     }    
+
+    // Convert message to cstr   
     const char *charResponse = response.c_str();
-	sendRetVal = send(dataSocket, charResponse, response.length(), MSG_NOSIGNAL);
-    if (sendRetVal == -1) {
-        perror("Send"); 
+	
+    // Send the response to client
+    // MSG_NOSIGNAL prevents broken pipe signal
+    if (send(dataSocket, charResponse, response.length(), MSG_NOSIGNAL) == -1) {
+        perror("Send");
+        close(dataSocket);
+        return 0; 
     } 
+
 	close(dataSocket);
 	return 1;
 }
+
+/**
+ * Return contents of tag or empty string
+ *
+ * @param tag the string inside xml style '<>' braces to find
+ * @param msg The unprocessed client request string
+ *
+ * @return  The string between the first instance of openTag and 
+ *          closeTag
+ */
 string parseTag(string tag, string msg) {
-    int dataLength;
+    int dataLength = 0;  // Character length of content between tags
+    
+    // Add braces to tag to differentiate open and close tags
     const string openTag("<" + tag + ">");
     const string closeTag("</" + tag + ">");
+
+    // Calculate length of content
     dataLength = msg.find(closeTag) - msg.find(openTag) - openTag.length();
+    
+    // Verify content length and cut out tags.
     if ( dataLength > 0)
         return msg.substr((msg.find(openTag) + openTag.length()), dataLength);
     else 
         return "";
 }
-std::string parseCommand(string msg, int *portNo) {
-	string message(msg);
-    string command;
+
+/**
+ * Process response based on client request
+ *
+ * @param msg Client request message
+ * @param portNo the client's requested response port
+ *
+ * @return formatted data to send back to client 
+ */
+std::string parseCommand(string message, int *portNo) {
+    string tagContents;
     string port;
 	string returnMSG = "";
-
-	//Command is 1 letter long.
-	command = message.substr(message.find_first_of('<') + 1, 1);
+    string filename;
     
-    port = parseTag("dataport", message);
-	cout << "parseTag port result: " << port<< endl;
+    port = parseTag(PORT_TAG, message);
     *portNo = stoi(port);
 
-	
-	//Check for "Get" command
-	if (command.compare(GET_COMMAND) == 0) {
-		//Look for filename
-		int lenFilename = (int) (message.find("</g>") - message.find("<g>") - 3);
-		string filename = message.substr(message.find("<g>") + 3, lenFilename);
-		cout << "File " << filename << "requested on port " << port << "\n";
-        if(fileExists(filename)) {
+	// Check for "Get file" command
+	if ((tagContents = parseTag(GET_COMMAND, message)).compare("") != 0) {
+		filename = tagContents;
+
+        // Client sent "Get" command. 
+        // Validate filename and add file to return message.
+
+        // Print status message to terminal.
+        cout << "File " << filename << "requested on port " << port << "\n";
+        
+        // If valid filename, add file to return string.
+        if(fileExists(filename)) {  // File exists in current directory
             returnMSG = 
                 "<ok><name>"            + 
                 filename                + 
                 "</name><data>"         + 
-                fileAsString(filename)  +   
+                fileAsString(filename)  + // Entire file as string. 
                 "</data></ok>";
+
+            // Print status message to terminal.
             cout << "Sending " << filename << " to client.\n"; 
         }
-        else {
+        else {  // filename is invalid
+            // Add error message to return string
             returnMSG = "<error>There is no such file</error>";
+
+            // Print status message to terminal
             cout << "The requested file does not exist, sending error msg\n";
         }
-	}
-	else if (command.compare(LIST_COMMAND) == 0) {
+	}  // End "Get file" command
+	
+    // Check for "list" command.
+    else if ((tagContents = parseTag(LIST_COMMAND, message)).compare("") != 0) {
+     
+        // Print status message to terminal
         cout << "List directory requested on port " << port << " \n";    
-		//List files in current directory into a tag-delimited string
+		
+        // List files in current directory into a tag-delimited string
 		string fileNames = lsCWD();
-		//encapsulate files into a message
+	
+        //encapsulate files into a message
 		returnMSG = "<ok><list>" + fileNames + " </list></ok>";
 	}
 	else {
 		//encapsulate error message into a message
-		returnMSG = "<error>Command " + command + " not recognized</error>";
+		returnMSG = "<error>Command " + tagContents + " not recognized</error>";
 	}
 	return returnMSG;
 }
 
+/**
+ * Return string representation of file filename
+ *
+ * @param filename The relative path of the file to read
+ * 
+ */
 string fileAsString(string filename) {
+   
     // File stream refresher provided by:
     // www.cplusplus.com/doc/tutorial/files
+   
     string line, fileString = "";
+   
+    // Attempt to open filename.
+    // ifstream default flag is RDONLY
     ifstream file(filename);
+
     if (file.is_open()) {
         // Below while loop obtained from source (above)
+        // Read line-by-line from file until EOF
         while (getline(file, line))
             fileString.append(line + "\n");
         file.close();
@@ -295,47 +424,82 @@ string fileAsString(string filename) {
         cout << "Error reading file";
     return fileString;
 }
+
+/**
+ * Search this directory for filename
+ *
+ * @param fileName a file or directory name
+ * 
+ * @return if fileName exists in this directory
+ */
 bool fileExists(string fileName) {
     bool fileFound = false;
+
+    // Will contain path. Memory allocated by getcwd()
     char *cwd = NULL;
     struct dirent *dirStream;
     string returnString = "";
-    //Get cwd path. Dynamically allocated.
+    
+    // Get cwd path. Dynamically allocated.
     cwd = getcwd(cwd, NULL);
+    
+    // Open the current directory  
     DIR *thisDir = opendir(cwd);
     if (!thisDir) {
         perror ("Opendir");
     }
+
+    // Help obtained from the accepted answer at SO here:
+    // stackoverflow.com/questions/3554120/open-directory-using-c
+    
+    // Compare the string representation of each object in thisDir
+    // to fileName.
     while ((dirStream = readdir(thisDir)) != NULL) {
         if (fileName.compare(dirStream->d_name) == 0) {
             fileFound =  true;
             break;
         }
     }
+
+    // Path buffer must be freed
     free(cwd);
     closedir(thisDir);   
     return fileFound;
-
 }
+
+/**
+ * Return a listing of files in this directory
+ *
+ * @return string tag-delimited file and directory listing
+ */
 string lsCWD() {
+
+    // Will hold path. Allocated by getcwd()
     char *cwd = NULL;
     struct dirent *dirStream;
     string returnString = "";
+    
     //Get cwd path. Dynamically allocated.
     cwd = getcwd(cwd, NULL);  
+    
+    //Open the current directory
     DIR *thisDir = opendir(cwd);
     if (!thisDir) {
         perror ("Opendir");
     }
     
-    //Help obtained from the accepted answer at SO here:
-    //stackoverflow.com/questions/3554120/open-directory-using-c
+    // Help obtained from the accepted answer at SO here:
+    // stackoverflow.com/questions/3554120/open-directory-using-c
+    
+    // Add the string representation of each object in thisDir
+    // to returnString.
     while ((dirStream = readdir(thisDir)) != NULL){
         returnString.append("<item>");
         returnString.append(dirStream->d_name);
         returnString.append("</item>");
     }
      
+    // Path buffer must be freed.
     free(cwd);
     closedir(thisDir);
     return returnString;  

@@ -144,7 +144,7 @@ def printError(serverMessage):
 
 def parseCommand(args):
     if (args.l):
-        command = '<' + LIST_COMMAND + '>'
+        command = '<' + LIST_COMMAND + '>  </' + LIST_COMMAND + '>'
     else:
         command = '<' + GET_COMMAND + '>' + args.g + '</' + GET_COMMAND + '>'
     return command + '<dataport>' + str(args.DATA_PORT) + '</dataport>'
