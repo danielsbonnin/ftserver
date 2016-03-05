@@ -1,5 +1,17 @@
 #!/usr/bin/env python
 #^
+"""ftclient.py: A simple file transfer client for class
+
+This module connects to the ftserver and reads contents of server directory
+or transfers a text file.
+
+ftclient.py uses 2 tcp connections: 1 to connect to server and send a command, 
+the other, to accept the server data connection on a specified port.
+
+Example:
+    $python ftclient.py serverHost <server port> <client port> -g <filename>
+
+"""
 import argparse
 import socket
 import re
@@ -16,28 +28,38 @@ NAME_TAG = "name"
 DATA_TAG = "data"
 
 def main():
+    # get valid command line input
     args = cliHandler()
 
-    #Create 2 sockets: control and data. 
+    # Create 2 sockets: control and data. 
     cntrl = socket.socket(
         socket.AF_INET, socket.SOCK_STREAM)
     dataSocket = socket.socket(
         socket.AF_INET, socket.SOCK_STREAM)
 
-    #Verify Server address and contact server
+    # Verify Server address and contact server
     initContact(args, cntrl)
+
+    # Create formatted command message
     commandMSG = parseCommand(args)
+
+    # Open TCP client socket conn with server
     sendCommand(cntrl, commandMSG)
+
+    # Open TCP server socket on specified port.
+    # Wait for server data
     data = receiveData(dataSocket, args)
-    print("Received from server: " + data)
+    
+    # Close sockets
     cntrl.close()
     dataSocket.close()
+    
+    # Save files and/or print data to terminal
     parseServerData(data)
 
-    
-    
     exit(0)
 
+# Use the argparse library to process commandline arguments
 def cliHandler():
     #Use argparse library to process cli
     
@@ -53,11 +75,15 @@ def cliHandler():
         type=int,
         help='The server\'s port number')
     parser.add_argument('DATA_PORT', type=str, help='The data port number')
+    
+    # User must enter 1 and only 1 command option
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         '-l',
         action='store_true',
         help='list files in current server directory')
+    
+    # The "Get File" command option must be followed by a filename argument 
     group.add_argument(
         '-g',
         metavar='FILENAME',
@@ -66,25 +92,25 @@ def cliHandler():
     
     return parser.parse_args()
 
+# Connect to server on specified SERVER_HOST and SERVER_PORT
+# @param args the cli arguments of hostname and port
+# @param s the tcp socket object
 def initContact(args, s):
-    args.hostname = 'localhost'
-    args.port = 4545
     #Establish connection with server
-    #@param args the cli arguments of hostname and port
-    #@param s the tcp socket object
     
     #This error handling code heavily influenced by the accepted answer here:
     #stackoverflow.com/questions/177389/testing-socket-connection-in-python
     try:
-        s.connect((args.hostname, args.SERVER_PORT))
+        s.connect((args.SERVER_HOST, args.SERVER_PORT))
     except Exception as e:
-        print(args.hostname + ':' +
+        print(args.SERVER_HOST + ':' +
               str(args.SERVER_PORT) +
               ' does not seem to be responding.')
         #print(e)
         s.close()
         exit(1)
 
+# Send formatted message and close client socket
 def sendCommand(s, commandMSG):
     #@param s the socket object
     try:  #format and send command
@@ -100,12 +126,14 @@ def sendCommand(s, commandMSG):
             print("Socket Exception")
             exit(1)
 
+# wait on server socket for ftserver to connect and send response
 def receiveData(dataSocket, args):
     dataSocket.bind(('localhost', int(args.DATA_PORT)))
     dataSocket.listen(1)
     data, serverAddr = dataSocket.accept()
     return data.recv(1024).decode('utf-8')
 
+# Process server data
 def parseServerData(serverMessage):
     if OK_TAG in serverMessage:
         if LIST_TAG in serverMessage:
@@ -118,12 +146,14 @@ def parseServerData(serverMessage):
         else:
             print("Server Message is in an unrecognized format" + serverMessage)  
 
+# Print directory contents to terminal
 def printList(serverMessage):
     filenames = parseTag(ITEM_TAG, serverMessage)
     print("***Files in remote directory***")
     for i in filenames:
         print(i)
 
+# Save requested file in local directory
 def saveFile(serverMessage):
     filename = parseTag(NAME_TAG, serverMessage)
     fileData = parseTag(DATA_TAG, serverMessage)
@@ -138,10 +168,12 @@ def saveFile(serverMessage):
     print(contents)
     newFile.close()
 
+
 def printError(serverMessage):
     errorMSG = parseTag(ERROR_TAG, serverMessage)
     print(errorMSG[0])
 
+# Create formatted command message to send to ftserver
 def parseCommand(args):
     if (args.l):
         command = '<' + LIST_COMMAND + '>  </' + LIST_COMMAND + '>'
@@ -149,6 +181,7 @@ def parseCommand(args):
         command = '<' + GET_COMMAND + '>' + args.g + '</' + GET_COMMAND + '>'
     return command + '<dataport>' + str(args.DATA_PORT) + '</dataport>'
 
+# Return contents of specified tag label
 def parseTag(tag, msg):
     openTag = '<' + tag + '>'
     closeTag = '</' + tag + '>'
