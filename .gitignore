@@ -11,3 +11,5 @@ ftserver
 *.swp
 test/
 testfile
+file128
+file*
