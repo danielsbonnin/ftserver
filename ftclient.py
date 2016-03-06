@@ -91,7 +91,15 @@ def cliHandler():
         type=str,
         help='retrieve <FILENAME> from server')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+   
+    # validate port arguments.
+    if ((int(args.SERVER_PORT) not in xrange (1024, 65535)) or
+    (int(args.DATA_PORT) not in xrange (1024, 65535))):
+        print "Port numbers must be in the range 1024-65535"
+        exit(1)
+    else:
+        return parser.parse_args()
 
 # Connect to server on specified SERVER_HOST and SERVER_PORT
 # @param args the cli arguments of hostname and port
@@ -112,8 +120,9 @@ def initContact(args, s):
         exit(1)
 
 # Send formatted message and close client socket
+# @param s the tcp socket object
+# @param commandMSG formatted string to send to server 
 def sendCommand(s, commandMSG):
-    #@param s the socket object
     try:  #format and send command
         s.sendall((commandMSG).encode('utf-8'))
     except socket.error as e:
@@ -128,16 +137,28 @@ def sendCommand(s, commandMSG):
             exit(1)
 
 # wait on server socket for ftserver to connect and send response
+# @param dataSocket tcp socket object
+# @param args contains all commandline arguments
+# @return Server data as string or None on error.
 def receiveData(dataSocket, args):
-
     returnString = ""
+
     # Get formatted host name. 
     # source: stackoverflow.com/questions/161030786/why-am-i-getting-the
     # error-connection-refused-in-python-sockets
     host = socket.gethostname()
-    dataSocket.bind((host, int(args.DATA_PORT)))
+    try: 
+        dataSocket.bind((host, int(args.DATA_PORT)))
+    except socket.error as e:
+        if e.errno != 13:  # Server did not connect 
+            print("Socket error: " + strerror(e))
+        dataSocket.close()
+        return returnString
+
     dataSocket.listen(1)
     data, serverAddr = dataSocket.accept()
+    
+    # accumulate data into received until server closes socket
     while True:
         received = data.recv(MAX_RECV)
         if received == "":
@@ -147,8 +168,12 @@ def receiveData(dataSocket, args):
     return returnString
 
 # Process server data
+# @param serverMessage The raw server message
+# @param args contains all commandline arguments
 def parseServerData(serverMessage, args):
-    if OK_TAG in serverMessage:
+    if not serverMessage:
+        print("No response from server.")
+    elif OK_TAG in serverMessage:
         if LIST_TAG in serverMessage:
             printList(serverMessage, args)
         elif NAME_TAG in serverMessage:
@@ -160,6 +185,10 @@ def parseServerData(serverMessage, args):
             print("Server Message is in an unrecognized format" + serverMessage)  
 
 # Print directory contents to terminal
+# @param serverMessage The raw server message
+# @param args contains all commandline arguments
+# @pre serverMessage contains matched LIST_TAG tag pair 
+# @post Prints server's directory contents to terminal
 def printList(serverMessage, args):
     filenames = parseTag(ITEM_TAG, serverMessage)
     print "Receiving Directory structure from", args.SERVER_HOST + ":" + args.DATA_PORT 
@@ -167,9 +196,15 @@ def printList(serverMessage, args):
         print(i)
 
 # Save requested file in local directory
+# @param serverMessage the raw server message
+# @param args contains all commandline arguments
+# @pre serverMessage contains matched NAME_TAG tag pair
+# @post new file "filename" containing "fileData" created in current directory
 def saveFile(serverMessage, args):
     filename = parseTag(NAME_TAG, serverMessage)
     fileData = parseTag(DATA_TAG, serverMessage)
+    
+    # Do not create empty file
     if not fileData:
         return
     print "Receiving \"" + args.g + "\" from", args.SERVER_HOST + ":" + args.DATA_PORT
@@ -177,14 +212,17 @@ def saveFile(serverMessage, args):
     newFile.write(fileData[0])
     newFile.close()
     print "File transfer complete."
-    
 
-
+#Print server error message
+# @param serverMessage the raw server message
+# @pre serverMessage contains matched ERROR_TAG tag pair
 def printError(serverMessage):
     errorMSG = parseTag(ERROR_TAG, serverMessage)
     print(errorMSG[0])
 
 # Create formatted command message to send to ftserver
+# @param args contains all commandline arguments
+# @return formatted string to be sent to server
 def parseCommand(args):
     if (args.l):
         command = '<' + LIST_COMMAND + '>  </' + LIST_COMMAND + '>'
@@ -193,7 +231,10 @@ def parseCommand(args):
     return command + '<dataport>' + str(args.DATA_PORT) + '</dataport>'
 
 # Return contents of specified tag label
-# @param firstTagOnly whether to ignore closing tag
+# @param tag the label to find
+# @param msg the string to search
+# @return the substring of msg between <tag>...</tag> or None if not found
+# @post prints error message to terminal if searched tag not found
 def parseTag(tag, msg):
     openTag = '<' + tag + '>'
     closeTag = '</' + tag + '>'

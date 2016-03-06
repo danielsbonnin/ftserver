@@ -15,7 +15,6 @@
  *          ftserver will wait on the specified port until a client connects
  *          or a keyboard interrupt is received.  
  */
-
 #include <iostream>    
 #include <stdio.h>
 #include <string>
@@ -33,7 +32,7 @@ bool notKilled = true; // Do not gracefully quit
 
 // Handle keyboard interrupt.
 // Print status message
-// Set notKilled to true
+// Set notKilled to false 
 static void signalHandler(int signum) {
     cout << "Keyboard interrupt received\n";
     notKilled = false;
@@ -49,7 +48,7 @@ int main(int argc, char** argv) {
     if ((portno = getPort(argc, argv)) == -1)
 	    return 0;  // Gracefully close on invalid port argument.
 	
-	cout << "You entered port number: " << portno << "\n";
+	cout << "Server open on " << portno << "\n";
     
     //Call server function on port arg.
 	waitForClient(to_string((long long)portno).c_str(), &notKilled);
@@ -83,7 +82,7 @@ int getPort(int argc, char **argv) {
 		cout << "Please enter an integer port argument.\n" << USAGE;
 		return -1;
 	}
-
+    
     // Port number argument out of range
 	if (portno < PORT_MIN || portno > PORT_MAX) {
 		cout << "Port Number argument out of range\n" << USAGE;
@@ -106,6 +105,7 @@ int waitForClient(const char *portno, bool *notKilled) {
 	int status;
     int  s = 0;  // The server socket
 	int c = 0; // The client in the control connection.
+    int dataPortNo = 0;  // Connecting client's specified receiving port
 	int recvRetVal; // Bytes read or error
 
     // Obtained much socket data structure help from Beej's Guide: 
@@ -116,8 +116,10 @@ int waitForClient(const char *portno, bool *notKilled) {
 	struct addrinfo *next;  // Next in linked list of ip addresses
     struct sockaddr_storage c_addr;  // Address info about client
 	char buffer[RECV_BUF_LEN];  // holds incoming data
+    char clientHost[MAX_HOST_LEN]; // The connecting client hostname
 
-	memset(&hints, 0, sizeof hints); // Zero-out hints
+    memset(&clientHost, 0, MAX_HOST_LEN);  // Zero-out clientHost
+    memset(&hints, 0, sizeof hints); // Zero-out hints
 	hints.ai_family = AF_INET;  // ipv4 socket
 	hints.ai_socktype = SOCK_STREAM; // TCP, not UDP
 	hints.ai_flags = AI_PASSIVE; // fill in my ip for me
@@ -155,6 +157,7 @@ int waitForClient(const char *portno, bool *notKilled) {
 
     // Free the memory for servinfo now that it's not needed
     freeaddrinfo(servinfo);
+
     // Prepare socket s to accept clients
 	if ((listen(s, MAX_INCOMING_CONNECTIONS)) == -1) {
 	    perror("Listen");
@@ -171,24 +174,24 @@ int waitForClient(const char *portno, bool *notKilled) {
 			return 0;
 		}
         
+        // Cast first item in c_addr as sockaddr *
         struct sockaddr * clientAddr = (struct sockaddr *)&c_addr; 
-        void * addr;
-        addr = &((sockaddr_in *)clientAddr)->sin_addr; 
-        // convert byte order from network byte order (for portability)
-        char clientHost[MAX_HOST_LEN]; 
-        memset(&clientHost, 0, MAX_HOST_LEN);
+        
+        // Fill client's hostname (clientHost) using the info in clientAddr
         getnameinfo(clientAddr, addrlen, clientHost, MAX_HOST_LEN, NULL, 0, 0);
-        string cHostname(clientHost);
-        cout << "Connection from " << clientHost << endl;
+        
+        // std::string repr of clientHost (For ease of passing as argument)
+        string cHostname(clientHost);  
+        cout << "Connection from " << cHostname << endl;
 		
         // Help for the following do-while loop obtained at msdn:
         // msdn.microsoft.com/en-us/windows/desktop/bb530746(v=vs.85).aspx 
         
 		// Loop recv until no more data to read.
 		do {
-			int dataPortNo = 0;
+			dataPortNo = 0;
 			recvRetVal = recv(c, buffer, RECV_BUF_LEN, 0);
-			if (recvRetVal > 0) {
+			if (recvRetVal > 0) {  // Data has been received
                 
                 // Create a std::string from the buffer
                 string bufString(buffer);
@@ -198,7 +201,12 @@ int waitForClient(const char *portno, bool *notKilled) {
 
                 // get a formatted response to send to client
                 string response = parseCommand(bufString, &dataPortNo, cHostname);
-
+                
+                // Check for abort condition
+                if (dataPortNo == -1) {  // Problem with client port
+                    close(c);
+                    break;
+                }
                 // Allow client time to open a socket and listen.   
                 sleep(1);
 
@@ -212,7 +220,6 @@ int waitForClient(const char *portno, bool *notKilled) {
 
             // All data has been received
 			else if (recvRetVal == 0) {
-				cout << "Connection closing..." << endl;
                 close(c);
 		    }	
 
@@ -221,7 +228,7 @@ int waitForClient(const char *portno, bool *notKilled) {
 			    perror("Recv");
                 close(c); 
 			}
-		} while (recvRetVal > 0);
+		} while (recvRetVal > 0);  // More data to read on socket
 	}
 
     // Close server and client sockets.
@@ -245,13 +252,12 @@ int sendResponse(
         int portNo){
    
     //Create data structures for connection
-	int dataSocket = 0;
-	
-    // bytes successfully sent
-    int totalSent = 0;
-    int sent = 0;
-    int toSend = 0;
+	int dataSocket = 0; // Socket descriptor
+    int totalSent = 0;  // Total bytes sent
+    int sent = 0;       // Bytes sent this iteration
+    int toSend = 0;     // Bytes to send this iteration
     int responseLength = response.length();
+
 	/* 
      * Much of the socket code in this function is paraphrased from Beej's guide
      * I tried to make this my original work, but I fully attribute any 
@@ -277,7 +283,6 @@ int sendResponse(
      * (continuation)getting-ipv4-address-from-a-sockaddr-structure
 	 */
     
-
     // convert byte order from network byte order (for portability)
 	char *ip = inet_ntoa(((sockaddr_in*)clientAddr)->sin_addr);
     
@@ -303,10 +308,15 @@ int sendResponse(
         return 0;
     }    
 
+    // socket info no longer needed.
+    free(serverInfo);
+
     // Send the response to client
     // MSG_NOSIGNAL prevents broken pipe signal
     while (totalSent < responseLength) {
         toSend = responseLength - totalSent;
+
+        // Either send MAX_SEND_LEN bytes or remaining bytes, whichever is less
         toSend = (toSend < MAX_SEND_LEN) ? toSend : MAX_SEND_LEN;
         sent = send(
             dataSocket, 
@@ -358,20 +368,40 @@ string parseTag(string tag, string msg) {
  *
  * @param msg Client request message
  * @param portNo the client's requested response port
+ * @param cHostname the clien's hostname(for status messages)
  *
  * @return formatted data to send back to client 
+ * @return portNo* is now the int value of the client's requested data port
  */
-std::string parseCommand(string message, int *portNo, string cHostname) {
+string parseCommand(string message, int *portNo, string cHostname) {
     string tagContents;
     string port;
 	string returnMSG = "";
     string filename;
-    
+    int * portno = portNo; 
+    // String port number from client message
     port = parseTag(PORT_TAG, message);
-    *portNo = stoi(port);
 
-	// Check for "Get file" command
-	if ((tagContents = parseTag(GET_COMMAND, message)).compare("") != 0) {
+	/* 
+     * Help for exception handling: 
+	 * http://www.cplusplus.com/reference/stdexcept/invalid_argument/
+	 */
+	try {
+		*portno = stoi(port);
+	}
+	catch (const invalid_argument &e) // non-integer entered.
+	{
+        *portno = -1;
+	}
+
+	if (*portno < 1024 || *portno > 65535) {
+		cout << "Client sent invalid data port number" << endl;
+        *portno = -1;
+        return "";
+    }
+    // Check for "Get file" command
+	if ((tagContents = parseTag(GET_COMMAND, message)).compare("") != 0) 
+    {
 		filename = tagContents;
 
         // Client sent "Get" command. 
@@ -390,7 +420,7 @@ std::string parseCommand(string message, int *portNo, string cHostname) {
                 "</data></ok>";
 
             // Print status message to terminal.
-            cout << "Sending " << filename << " to ";
+            cout << "Sending \"" << filename << "\" to ";
             cout << cHostname << ":" << port << endl ; 
         }
         else {  // filename is invalid
@@ -404,18 +434,21 @@ std::string parseCommand(string message, int *portNo, string cHostname) {
 	}  // End "Get file" command
 	
     // Check for "list" command.
-    else if ((tagContents = parseTag(LIST_COMMAND, message)).compare("") != 0) {
-     
+    else if ((tagContents = parseTag(LIST_COMMAND, message)).compare("") != 0) 
+    { 
         // Print status message to terminal
         cout << "List directory requested on port " << port << " \n";    
 		
         // List files in current directory into a tag-delimited string
 		string fileNames = lsCWD();
 	
-        //encapsulate files into a message
+        //encapsulate directory object names into a message
 		returnMSG = "<ok><list>" + fileNames + " </list></ok>";
+        // Print status message to terminal.
+        cout << "Sending directory contents to ";
+        cout << cHostname << ":" << port << endl ; 
 	}
-	else {
+	else { 
 		//encapsulate error message into a message
 		returnMSG = "<error>Command " + tagContents + " not recognized</error>";
 	}
@@ -423,7 +456,7 @@ std::string parseCommand(string message, int *portNo, string cHostname) {
 }
 
 /**
- * Return string representation of file filename
+ * Return string representation of file
  *
  * @param filename The relative path of the file to read
  * 
@@ -439,20 +472,20 @@ string fileAsString(string filename) {
     // ifstream default flag is RDONLY
     ifstream file(filename);
 
-    if (file.is_open()) {
+   if (file.is_open()) {
         // Below while loop obtained from source (above)
         // Read line-by-line from file until EOF
         while (getline(file, line))
-            fileString.append(line + "\n");
+            fileString.append(line + "\n"); // replace stripped newlines
         file.close();
     }
 
     else
         cout << "Error reading file";
-    // TODO: remove debugging statement
-    cout << "done reading file. filesize is " << fileString.length() << endl; 
+    
     // While loop adds an unnecessary newline; remove that.
     fileString = fileString.substr(0, fileString.size() -1);
+    
     return fileString;  
 }
 
@@ -498,13 +531,13 @@ bool fileExists(string fileName) {
     return fileFound;
 }
 
+
 /**
  * Return a listing of files in this directory
  *
  * @return string tag-delimited file and directory listing
  */
 string lsCWD() {
-
     // Will hold path. Allocated by getcwd()
     char *cwd = NULL;
     struct dirent *dirStream;

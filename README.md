@@ -13,7 +13,7 @@ There are 4 files contained in the archive file:
     ftserver.hpp
     ftclient.py
     makefile
-    README.txt
+    README.md
 
 In order to build the server, ensure that ftserver.cpp, ftserver.hpp, 
 and makefile are in the same directory. From within the same directory,
@@ -44,22 +44,22 @@ Commandline variables:
     data port number:   The open port on ftclient's host
 
 Options:
-    ftclient requires a command option. The user must select "-l"
-    or "-g". 
+    ftclient requires a command option. The user must select 1 and only 1 of
+    the following 2 options: "-l" or "-g". 
 
     The "-l" ("List") command returns a list of all the objects in the
     ftserver current directory.
 
     The "-g" ("Get File") command copies a file from ftserver's current 
     directory to ftclient's current directory. This command requires a 
-    "filename" argument which is a relative path + filename to ftserver's
+    "filename" argument which is a relative path + filename from ftserver's
     current directory. 
 
     If the filename argument is not valid, ftserver returns an error message,
     which is printed to the terminal by ftclient.
 
 Termination Conditions
-    ftclient terminates after receiving a server response.  
+    ftclient terminates automatically, after receiving a server response.  
 
     ftserver terminates via keyboard interrupt (CNTRL-C)
 
