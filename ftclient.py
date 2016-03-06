@@ -140,7 +140,7 @@ def receiveData(dataSocket, args):
     print"listening on port ", args.DATA_PORT
     data, serverAddr = dataSocket.accept()
     while True:
-        received = data.recv(MAX_RECV).decode('utf-8')
+        received = data.recv(MAX_RECV)
         if received == "":
             break
         returnString += received
