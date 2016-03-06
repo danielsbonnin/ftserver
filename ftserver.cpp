@@ -128,7 +128,6 @@ int waitForClient(const char *portno, bool *notKilled) {
 		return 0;
 	}
     
-
     // The following for loop heavily borrowed from Beej's guide (link above)
 	// Walk the linked list of struct addrinfos in order to find a valid one. 
 	for (next = servinfo; next != NULL; next = next->ai_next) {
@@ -171,8 +170,18 @@ int waitForClient(const char *portno, bool *notKilled) {
             close(s);
 			return 0;
 		}
-
-		// Help for the following do-while loop obtained at msdn:
+        
+        struct sockaddr * clientAddr = (struct sockaddr *)&c_addr; 
+        void * addr;
+        addr = &((sockaddr_in *)clientAddr)->sin_addr; 
+        // convert byte order from network byte order (for portability)
+        char clientHost[MAX_HOST_LEN]; 
+        memset(&clientHost, 0, MAX_HOST_LEN);
+        getnameinfo(clientAddr, addrlen, clientHost, MAX_HOST_LEN, NULL, 0, 0);
+        string cHostname(clientHost);
+        cout << "Connection from " << clientHost << endl;
+		
+        // Help for the following do-while loop obtained at msdn:
         // msdn.microsoft.com/en-us/windows/desktop/bb530746(v=vs.85).aspx 
         
 		// Loop recv until no more data to read.
@@ -188,7 +197,7 @@ int waitForClient(const char *portno, bool *notKilled) {
                 bufString = bufString.substr(0, recvRetVal);
 
                 // get a formatted response to send to client
-                string response = parseCommand(bufString, &dataPortNo);
+                string response = parseCommand(bufString, &dataPortNo, cHostname);
 
                 // Allow client time to open a socket and listen.   
                 sleep(1);
@@ -268,9 +277,10 @@ int sendResponse(
      * (continuation)getting-ipv4-address-from-a-sockaddr-structure
 	 */
     
+
     // convert byte order from network byte order (for portability)
 	char *ip = inet_ntoa(((sockaddr_in*)clientAddr)->sin_addr);
-
+    
     // Get portnumber into a cstring for use in getaddrinfo()
     string portNumber = to_string((long long)portNo);
     
@@ -293,9 +303,6 @@ int sendResponse(
         return 0;
     }    
 
-    // Convert message to cstr   
-    const char *charResponse = response.c_str();
-    
     // Send the response to client
     // MSG_NOSIGNAL prevents broken pipe signal
     while (totalSent < responseLength) {
@@ -313,8 +320,6 @@ int sendResponse(
         } 
         else {
             totalSent += sent;
-            //TODO: remove debug statement
-            cout << "sending " << sent << " bytes. " << totalSent << " sent so far out of " << responseLength << endl;
         }
     }
        
@@ -356,7 +361,7 @@ string parseTag(string tag, string msg) {
  *
  * @return formatted data to send back to client 
  */
-std::string parseCommand(string message, int *portNo) {
+std::string parseCommand(string message, int *portNo, string cHostname) {
     string tagContents;
     string port;
 	string returnMSG = "";
@@ -373,7 +378,7 @@ std::string parseCommand(string message, int *portNo) {
         // Validate filename and add file to return message.
 
         // Print status message to terminal.
-        cout << "File " << filename << "requested on port " << port << "\n";
+        cout << "File \"" << filename << "\" requested on port " << port << ".\n";
         
         // If valid filename, add file to return string.
         if(fileExists(filename)) {  // File exists in current directory
@@ -385,14 +390,16 @@ std::string parseCommand(string message, int *portNo) {
                 "</data></ok>";
 
             // Print status message to terminal.
-            cout << "Sending " << filename << " to client.\n"; 
+            cout << "Sending " << filename << " to ";
+            cout << cHostname << ":" << port << endl ; 
         }
         else {  // filename is invalid
             // Add error message to return string
-            returnMSG = "<error>There is no such file</error>";
+            returnMSG = "<error>FILE NOT FOUND</error>";
 
             // Print status message to terminal
-            cout << "The requested file does not exist, sending error msg\n";
+            cout << "File not found. Sending error message to ";
+            cout << cHostname << ":" << port << endl;
         }
 	}  // End "Get file" command
 	

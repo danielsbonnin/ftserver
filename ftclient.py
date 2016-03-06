@@ -56,7 +56,7 @@ def main():
     dataSocket.close()
     
     # Save files and/or print data to terminal
-    parseServerData(data)
+    parseServerData(data, args)
 
     exit(0)
 
@@ -137,7 +137,6 @@ def receiveData(dataSocket, args):
     host = socket.gethostname()
     dataSocket.bind((host, int(args.DATA_PORT)))
     dataSocket.listen(1)
-    print"listening on port ", args.DATA_PORT
     data, serverAddr = dataSocket.accept()
     while True:
         received = data.recv(MAX_RECV)
@@ -148,12 +147,12 @@ def receiveData(dataSocket, args):
     return returnString
 
 # Process server data
-def parseServerData(serverMessage):
+def parseServerData(serverMessage, args):
     if OK_TAG in serverMessage:
         if LIST_TAG in serverMessage:
-            printList(serverMessage)
+            printList(serverMessage, args)
         elif NAME_TAG in serverMessage:
-            saveFile(serverMessage)
+            saveFile(serverMessage, args)
     else:
         if ERROR_TAG in serverMessage:
             printError(serverMessage);
@@ -161,22 +160,23 @@ def parseServerData(serverMessage):
             print("Server Message is in an unrecognized format" + serverMessage)  
 
 # Print directory contents to terminal
-def printList(serverMessage):
+def printList(serverMessage, args):
     filenames = parseTag(ITEM_TAG, serverMessage)
-    print("***Files in remote directory***")
+    print "Receiving Directory structure from", args.SERVER_HOST + ":" + args.DATA_PORT 
     for i in filenames:
         print(i)
 
 # Save requested file in local directory
-def saveFile(serverMessage):
+def saveFile(serverMessage, args):
     filename = parseTag(NAME_TAG, serverMessage)
     fileData = parseTag(DATA_TAG, serverMessage)
     if not fileData:
         return
-
+    print "Receiving \"" + args.g + "\" from", args.SERVER_HOST + ":" + args.DATA_PORT
     newFile = open(filename[0], 'w+')
     newFile.write(fileData[0])
     newFile.close()
+    print "File transfer complete."
     
 
 

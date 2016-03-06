@@ -13,6 +13,7 @@
 #define MAX_INCOMING_CONNECTIONS 1
 #define RECV_BUF_LEN 1024
 #define MAX_SEND_LEN 8096 
+#define MAX_HOST_LEN 256
 #define GET_COMMAND "g"
 #define LIST_COMMAND "l"
 #define PORT_TAG "dataport"
@@ -23,7 +24,7 @@ int sendResponse(
         struct sockaddr *clientAddr, 
         socklen_t *addrlen, 
         int portNo);
-std::string parseCommand(std::string msg, int *portNo);
+std::string parseCommand(std::string msg, int *portNo, std::string cHostname);
 std::string lsCWD();
 bool fileExists(std::string filename);
 std::string fileAsString(std::string);
