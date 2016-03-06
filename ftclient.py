@@ -17,6 +17,7 @@ import socket
 import re
 
 #Command identifiers. Go inside html style <\> tags to be sent to server. 
+MAX_RECV = 8096
 GET_COMMAND = "g"
 LIST_COMMAND = "l"
 OK_TAG = "ok"
@@ -128,10 +129,23 @@ def sendCommand(s, commandMSG):
 
 # wait on server socket for ftserver to connect and send response
 def receiveData(dataSocket, args):
-    dataSocket.bind(('localhost', int(args.DATA_PORT)))
+
+    returnString = ""
+    # Get formatted host name. 
+    # source: stackoverflow.com/questions/161030786/why-am-i-getting-the
+    # error-connection-refused-in-python-sockets
+    host = socket.gethostname()
+    dataSocket.bind((host, int(args.DATA_PORT)))
     dataSocket.listen(1)
+    print"listening on port ", args.DATA_PORT
     data, serverAddr = dataSocket.accept()
-    return data.recv(1024).decode('utf-8')
+    while True:
+        received = data.recv(MAX_RECV).decode('utf-8')
+        if received == "":
+            break
+        returnString += received
+        # empty block
+    return returnString
 
 # Process server data
 def parseServerData(serverMessage):
@@ -157,16 +171,13 @@ def printList(serverMessage):
 def saveFile(serverMessage):
     filename = parseTag(NAME_TAG, serverMessage)
     fileData = parseTag(DATA_TAG, serverMessage)
-    print("data: ", fileData[0])
+    if not fileData:
+        return
+
     newFile = open(filename[0], 'w+')
     newFile.write(fileData[0])
     newFile.close()
     
-    print("contents of new file: " + filename[0] + ": ")
-    newFile = open(filename[0], 'r')
-    contents = newFile.read(50)
-    print(contents)
-    newFile.close()
 
 
 def printError(serverMessage):
@@ -182,6 +193,7 @@ def parseCommand(args):
     return command + '<dataport>' + str(args.DATA_PORT) + '</dataport>'
 
 # Return contents of specified tag label
+# @param firstTagOnly whether to ignore closing tag
 def parseTag(tag, msg):
     openTag = '<' + tag + '>'
     closeTag = '</' + tag + '>'

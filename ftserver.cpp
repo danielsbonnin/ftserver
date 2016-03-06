@@ -128,6 +128,7 @@ int waitForClient(const char *portno, bool *notKilled) {
 		return 0;
 	}
     
+
     // The following for loop heavily borrowed from Beej's guide (link above)
 	// Walk the linked list of struct addrinfos in order to find a valid one. 
 	for (next = servinfo; next != NULL; next = next->ai_next) {
@@ -155,7 +156,6 @@ int waitForClient(const char *portno, bool *notKilled) {
 
     // Free the memory for servinfo now that it's not needed
     freeaddrinfo(servinfo);
-
     // Prepare socket s to accept clients
 	if ((listen(s, MAX_INCOMING_CONNECTIONS)) == -1) {
 	    perror("Listen");
@@ -238,6 +238,11 @@ int sendResponse(
     //Create data structures for connection
 	int dataSocket = 0;
 	
+    // bytes successfully sent
+    int totalSent = 0;
+    int sent = 0;
+    int toSend = 0;
+    int responseLength = response.length();
 	/* 
      * Much of the socket code in this function is paraphrased from Beej's guide
      * I tried to make this my original work, but I fully attribute any 
@@ -263,14 +268,14 @@ int sendResponse(
      * (continuation)getting-ipv4-address-from-a-sockaddr-structure
 	 */
     
-    // convert byte order to network byte order (for portability)
+    // convert byte order from network byte order (for portability)
 	char *ip = inet_ntoa(((sockaddr_in*)clientAddr)->sin_addr);
-	
+
     // Get portnumber into a cstring for use in getaddrinfo()
     string portNumber = to_string((long long)portNo);
-
+    
     // Set up serverInfo struct
-	if ((getaddrinfo(ip, portNumber.c_str(), &hints, &serverInfo))== -1) {
+	if ((getaddrinfo(ip, portNumber.c_str(), &hints, &serverInfo))!= 0) {
         perror("getaddrinfo");
         return 0;
     }
@@ -290,15 +295,29 @@ int sendResponse(
 
     // Convert message to cstr   
     const char *charResponse = response.c_str();
-	
+    
     // Send the response to client
     // MSG_NOSIGNAL prevents broken pipe signal
-    if (send(dataSocket, charResponse, response.length(), MSG_NOSIGNAL) == -1) {
-        perror("Send");
-        close(dataSocket);
-        return 0; 
-    } 
-
+    while (totalSent < responseLength) {
+        toSend = responseLength - totalSent;
+        toSend = (toSend < MAX_SEND_LEN) ? toSend : MAX_SEND_LEN;
+        sent = send(
+            dataSocket, 
+            response.substr(totalSent).c_str(), 
+            toSend, 
+            MSG_NOSIGNAL);
+        if (sent == -1) {
+            perror("Send");
+            close(dataSocket);
+            return 0; 
+        } 
+        else {
+            totalSent += sent;
+            //TODO: remove debug statement
+            cout << "sending " << sent << " bytes. " << totalSent << " sent so far out of " << responseLength << endl;
+        }
+    }
+       
 	close(dataSocket);
 	return 1;
 }
@@ -407,7 +426,7 @@ string fileAsString(string filename) {
     // File stream refresher provided by:
     // www.cplusplus.com/doc/tutorial/files
    
-    string line, fileString = "";
+    string line, fileString;
    
     // Attempt to open filename.
     // ifstream default flag is RDONLY
@@ -420,9 +439,14 @@ string fileAsString(string filename) {
             fileString.append(line + "\n");
         file.close();
     }
+
     else
         cout << "Error reading file";
-    return fileString;
+    // TODO: remove debugging statement
+    cout << "done reading file. filesize is " << fileString.length() << endl; 
+    // While loop adds an unnecessary newline; remove that.
+    fileString = fileString.substr(0, fileString.size() -1);
+    return fileString;  
 }
 
 /**

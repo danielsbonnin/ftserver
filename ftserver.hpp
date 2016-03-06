@@ -12,6 +12,7 @@
 #define USAGE "Usage: ./ftserver <int PORTNO (1024 - 65535)>\n"
 #define MAX_INCOMING_CONNECTIONS 1
 #define RECV_BUF_LEN 1024
+#define MAX_SEND_LEN 8096 
 #define GET_COMMAND "g"
 #define LIST_COMMAND "l"
 #define PORT_TAG "dataport"
